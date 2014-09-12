@@ -13,8 +13,8 @@ class LintMiddleware(object):
     '''
     Middleware to lint the html before processing
     '''
-    link_re = re.compile(r"""<a href="(?:vim|sms).*?>(.*?)</a>""",  re.MULTILINE| re.DOTALL)
-    vmodl_re = re.compile(r"""<a href="vmodl.*?>(.*?)</a>""",  re.MULTILINE| re.DOTALL)
+    link_re = re.compile(r"""<a href="((?:vim|sms)[^"]*?)(?:\.html)?".*?>(?:.*?)(\[\])?</a>""",  re.MULTILINE| re.DOTALL)
+    vmodl_re = re.compile(r"""<a href="(vmodl[^"]*?)(?:\.html)?".*?>.*?</a>""",  re.MULTILINE| re.DOTALL)
     anchor_re = re.compile(r"""<a href="#.*?>(.*?)</a>""",  re.MULTILINE| re.DOTALL)
     strong_re = re.compile(r"""<strong>(.*?)</strong>""",  re.MULTILINE| re.DOTALL)
     script_re = re.compile(r"""<script.*?>.*?</.*?script>""",  re.MULTILINE| re.DOTALL)
@@ -79,7 +79,7 @@ class LintMiddleware(object):
         body, _ = tidy_document(body, options={'drop-empty-paras':1,
                     'drop-font-tags':1,'enclose-text':1,'merge-divs':1,'fix-bad-comments':1})
 
-        body = self.link_re.sub('\g<1>', body)
+        body = self.link_re.sub(lambda m: ''.join(m.groups('')), body)
         body = self.vmodl_re.sub('\g<1>', body)
         body = self.strong_re.sub('\g<1>', body)
         body = self.script_re.sub('', body)

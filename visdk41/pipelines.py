@@ -41,13 +41,13 @@ class VisdkPipeline(object):
     def _get_type(self, _type):
         if _type is None or _type == "None":
             return "void"
+        if _type.endswith("dateTime"):
+            return "vmodl.DateTime"
         if _type.startswith("xsd:"):
             return _type[len("xsd:"):]
-        if _type == "dateTime":
-            return "vmodl.DateTime"
         if " to a " in _type:
-            return "vim." + _type.split(" to a ")[-1]
-        return "vim." + _type
+            return _type.split(" to a ")[-1]
+        return _type
 
     def _get_vmodl_name(self, item):
         return os.path.splitext(item['url'].split("/")[-1])[0]
@@ -59,13 +59,13 @@ class VisdkPipeline(object):
         for arg in meth.arguments:
             is_opt = "F_OPTIONAL" if arg.optional else "0"
             _type = self._get_type(arg.type)
-            arguments.append('("{}", "{}", "sms.version.version2", {}, None)'.format(arg.name, _type, is_opt))
+            arguments.append('("{}", "{}", "sms.version.version4", {}, None)'.format(arg.name, _type, is_opt))
         return "(\n\t\t\t{},\n\t\t)".format(",\n\t\t\t".join(arguments))
 
     def create_mo_method_fault_string(self, meth):
         if len(meth.faults) == 0:
             return "None"
-        return "[{}]".format(", ".join(['"vim.{}"'.format(f.type) for f in meth.faults]))
+        return "[{}]".format(", ".join(['"{}"'.format(f.type) for f in meth.faults]))
 
     def create_mo_method_string(self, item):
         methods = []
@@ -73,7 +73,7 @@ class VisdkPipeline(object):
             # mVmodl, mWsdl, mVersion, mParams, mResult, mPrivilege, mFaults
             mFaults = self.create_mo_method_fault_string(meth)
             mParams = self.create_mo_method_arguments_string(meth)
-            mVersion = "sms.version.version2"
+            mVersion = "sms.version.version4"
             mResult = '(0, "{0}", "{0}")'.format(self._get_type(meth.return_value.type))
             mPrivilege = meth.privileges[0]
             methods.append('("{}", "{}", "{}", {}, {}, "{}", {})'.format(meth.name, meth.name, mVersion, mParams, mResult, mPrivilege, mFaults))
@@ -88,8 +88,8 @@ class VisdkPipeline(object):
         # vmodlName, wsdlName, parent, version, props, methods
         wsdlName = item["name"]
         vmodlName = self._get_vmodl_name(item)
-        parent = "vim." + item['info'].get('Extends', "ManagedObject")
-        version = "sms.version.version2"
+        parent = item['info'].get('Extends', "vmodl.ManagedObject")
+        version = "sms.version.version4"
         props = self.create_mo_field_string(item)
         methods = self.create_mo_method_string(item)
         return 'CreateManagedType(\n\t"{0}",\n\t"{1}",\n\t"{2}",\n\t"{3}",\n\t{4},\n\t{5}\n)\n'.format(vmodlName, wsdlName, parent, version, props, methods)
@@ -99,15 +99,15 @@ class VisdkPipeline(object):
         for arg in item["properties"]:
             is_opt = "F_OPTIONAL" if arg.optional else "0"
             _type = self._get_type(arg.type)
-            fields.append('("{}", "{}", "sms.version.version2", {})'.format(arg.name, _type, is_opt))
+            fields.append('("{}", "{}", "sms.version.version4", {})'.format(arg.name, _type, is_opt))
         return "[\n\t\t{}\n\t]".format(",\n\t\t".join(fields))
 
     def create_do_string(self, item):
         # vmodlName, wsdlName, parent, version, props
         vmodlName = self._get_vmodl_name(item)
         wsdlName = item["name"]
-        parent = "vim." + item['info'].get('Extends', "DynamicData")
-        version = "sms.version.version2"
+        parent = item['info'].get('Extends', "vmodl.DynamicData")
+        version = "sms.version.version4"
         props = self.create_do_field_string(item)
         return 'CreateDataType(\n\t"{0}",\n\t"{1}",\n\t"{2}",\n\t"{3}",\n\t{4}\n)\n'.format(vmodlName, wsdlName, parent, version, props)
 
@@ -115,18 +115,21 @@ class VisdkPipeline(object):
         # vmodlName, wsdlName, version, values
         vmodlName = self._get_vmodl_name(item)
         wsdlName = item["name"]
-        version = "sms.version.version2"
+        version = "sms.version.version4"
         values = ['"{}"'.format(const.name) for const in item["constants"]]
         values = "[\n\t\t{}\n\t]".format(",\n\t\t".join(values))
         return 'CreateEnumType(\n\t"{0}",\n\t"{1}",\n\t"{2}",\n\t{3}\n)\n'.format(vmodlName, wsdlName, version, values)
+
+    def write_to_file(self, str):
+        if True:
+            str = str.replace("\n", "").replace("\t", "").replace(",", ", ") + "\n"
+        open("ServerObjects.py", "a+").write(str)
+
 
     def process_mo_item(self, item, items):
         props = []
         codename, docname = self._setup(item)
 
-        env = Environment(loader=PackageLoader('visdk41', 'templates'))
-        env.filters['uncamelcase'] = camel_to_under
-        env.filters['quote'] = quote
         for prop in item['properties']:
             # beware of keywords...
             if prop.name in keyword.kwlist + ['property']:
@@ -138,36 +141,28 @@ class VisdkPipeline(object):
         if _base == self.mo_base:
             _type = 'base'
 
-        open("ServerObjects.py", "a+").write(self.create_mo_string(item))
+        self.write_to_file(self.create_mo_string(item))
         return item
 
     def process_do_item(self, item, items):
         codename, docname = self._setup(item)
-
-        env = Environment(loader=PackageLoader('visdk41', 'templates'))
-        env.filters['uncamelcase'] = camel_to_under
-        env.filters['quote'] = quote
 
         _type = item['type']
         _base = item['info'].get('Extends', self.mo_base)
         if _base == self.mo_base:
             _type = 'base'
 
-        if item['name'] in ["DynamicData", "DyanmicArray", "DynamicProperty", "MethodFault"]:
+        if self._get_vmodl_name(item).startswith("vmodl"):
             return
 
-        open("ServerObjects.py", "a+").write(self.create_do_string(item))
+        self.write_to_file(self.create_do_string(item))
 
         return item
 
     def process_enum_item(self, item, items):
         codename, docname = self._setup(item)
 
-        env = Environment(loader=PackageLoader('visdk41', 'templates'))
-        env.filters['uncamelcase'] = camel_to_under
-        env.filters['quote'] = quote
-
-        open("ServerObjects.py", "a+").write(self.create_enum_string(item))
+        self.write_to_file(self.create_enum_string(item))
         return item
 
     def _get_props(self, item, items):
