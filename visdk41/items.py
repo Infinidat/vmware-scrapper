@@ -15,6 +15,7 @@ class ManagedItem(Item):
     description = Field()
     methods = Field()
     properties = Field()
+    url = Field()
 
 class DataItem(Item):
     name = Field()
@@ -23,6 +24,7 @@ class DataItem(Item):
     description = Field()
     properties = Field()
     namespace = Field()
+    url = Field()
 
 class EnumItem(Item):
     # define the fields for your item here like:
@@ -30,6 +32,7 @@ class EnumItem(Item):
     type = Field()
     description = Field()
     constants = Field()
+    url = Field()
 
 
 def _clean(selector):
@@ -97,21 +100,20 @@ class ReturnValue(object):
         self.description = ""
 
     def parse(self, table):
-        rv = []
+        self.description = ""
+        self.type = ""
+
         for row in table.select('.//tr')[1:]:
             cols = row.select('./td')
 
-            if len(cols) > 1:
+            if len(cols) > 0:
                 self.type = _clean(cols[0].select('./text()'))
-                if self.type and isinstance(self.type, list):
+                if isinstance(self.type, list):
                     self.type = ' '.join(self.type)
-                else:
-                    self.type = ""
+            if len(cols) > 1:
                 self.description = _clean(cols[1].select('./text()'))
                 if self.description and isinstance(self.description, list):
                     self.description = ' '.join(self.description)
-                else:
-                    self.description = ""
         return self
 
     def __str__(self):
@@ -162,12 +164,13 @@ class Arguments(IteratorObject):
 
 class Method(object):
     """ The method of a class """
-    def __init__(self, name, description="", arguments=[], return_value=None, faults=[]):
+    def __init__(self, name, description="", arguments=[], return_value=None, faults=[], privileges=[]):
         self.name = name
         self.description = description
         self.arguments = arguments
         self.return_value = return_value
         self.faults = faults
+        self.privileges = privileges
 
     def __str__(self):
         return self.name
@@ -210,13 +213,19 @@ class Methods(IteratorObject):
 
                 # the next three tables are for args, return and faults
                 args_table, return_table, faults_table = self._findParameters(s)
-
                 args    = Arguments().parse(args_table)
                 rv      = ReturnValue().parse(return_table)
                 faults  = Faults().parse(faults_table)
+                privileges = self._findPrivileges(s)
 
-                self.data.append( Method(name, desc, args, rv, faults) )
+                self.data.append( Method(name, desc, args, rv, faults, privileges) )
         return self.data
+
+    def _findPrivileges(self, selector):
+        paras = selector.select("//dt")
+        for para in paras:
+            if _clean(para.select("./text()")) == "Required Privileges":
+                return [_clean(s.select("./text()")) for s in para.select("following::dd")]
 
     def _findParameters(self, selector):
         args_table = rv_table = faults_table = None
@@ -348,6 +357,7 @@ class ManagedObject(Klass):
         self.item['description'] = self.description
         self.item['methods'] = Methods().parse(self.hxs)
         self.item['properties'] = Properties().parse(self.hxs)
+        self.item['url'] = response.url
         return self.item
 
 class DataObject(Klass):
@@ -365,6 +375,7 @@ class DataObject(Klass):
         self.item['info'] = self._gatherInfo()
         self.item['description'] = self.description
         self.item['properties'] = Properties().parse(self.hxs)
+        self.item['url'] = response.url
         return self.item
 
 class EnumObject(Klass):
@@ -381,6 +392,7 @@ class EnumObject(Klass):
         self.item['type'] = self.type
         self.item['description'] = self.description
         self.item['constants'] = Enums().parse(self.hxs)
+        self.item['url'] = response.url
         return self.item
 
 class Enum(object):

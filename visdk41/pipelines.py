@@ -38,6 +38,88 @@ class VisdkPipeline(object):
         #    self.process_do_item(item)
         return item
 
+    def _get_type(self, _type):
+        if _type is None or _type == "None":
+            return "void"
+        if _type.startswith("xsd:"):
+            return _type[len("xsd:"):]
+        if _type == "dateTime":
+            return "vmodl.DateTime"
+        if " to a " in _type:
+            return "vim." + _type.split(" to a ")[-1]
+        return "vim." + _type
+
+    def _get_vmodl_name(self, item):
+        return os.path.splitext(item['url'].split("/")[-1])[0]
+
+    def create_mo_method_arguments_string(self, meth):
+        arguments = []
+        if len(meth.arguments) == 0:
+            return "()"
+        for arg in meth.arguments:
+            is_opt = "F_OPTIONAL" if arg.optional else "0"
+            _type = self._get_type(arg.type)
+            arguments.append('("{}", "{}", "sms.version.version2", {}, None)'.format(arg.name, _type, is_opt))
+        return "(\n\t\t\t{},\n\t\t)".format(",\n\t\t\t".join(arguments))
+
+    def create_mo_method_fault_string(self, meth):
+        if len(meth.faults) == 0:
+            return "None"
+        return "[{}]".format(", ".join(['"vim.{}"'.format(f.type) for f in meth.faults]))
+
+    def create_mo_method_string(self, item):
+        methods = []
+        for meth in item["methods"]:
+            # mVmodl, mWsdl, mVersion, mParams, mResult, mPrivilege, mFaults
+            mFaults = self.create_mo_method_fault_string(meth)
+            mParams = self.create_mo_method_arguments_string(meth)
+            mVersion = "sms.version.version2"
+            mResult = '(0, "{0}", "{0}")'.format(self._get_type(meth.return_value.type))
+            mPrivilege = meth.privileges[0]
+            methods.append('("{}", "{}", "{}", {}, {}, "{}", {})'.format(meth.name, meth.name, mVersion, mParams, mResult, mPrivilege, mFaults))
+        return "[\n\t\t{}\n\t]".format(",\n\t\t".join(methods))
+
+    def create_mo_field_string(self, item):
+        if len(item["properties"]) > 1:
+            import pdb; pdb.set_trace()
+        return "[]"
+
+    def create_mo_string(self, item):
+        # vmodlName, wsdlName, parent, version, props, methods
+        wsdlName = item["name"]
+        vmodlName = self._get_vmodl_name(item)
+        parent = "vim." + item['info'].get('Extends', "ManagedObject")
+        version = "sms.version.version2"
+        props = self.create_mo_field_string(item)
+        methods = self.create_mo_method_string(item)
+        return 'CreateManagedType(\n\t"{0}",\n\t"{1}",\n\t"{2}",\n\t"{3}",\n\t{4},\n\t{5}\n)\n'.format(vmodlName, wsdlName, parent, version, props, methods)
+
+    def create_do_field_string(self, item):
+        fields = []
+        for arg in item["properties"]:
+            is_opt = "F_OPTIONAL" if arg.optional else "0"
+            _type = self._get_type(arg.type)
+            fields.append('("{}", "{}", "sms.version.version2", {})'.format(arg.name, _type, is_opt))
+        return "[\n\t\t{}\n\t]".format(",\n\t\t".join(fields))
+
+    def create_do_string(self, item):
+        # vmodlName, wsdlName, parent, version, props
+        vmodlName = self._get_vmodl_name(item)
+        wsdlName = item["name"]
+        parent = "vim." + item['info'].get('Extends', "DynamicData")
+        version = "sms.version.version2"
+        props = self.create_do_field_string(item)
+        return 'CreateDataType(\n\t"{0}",\n\t"{1}",\n\t"{2}",\n\t"{3}",\n\t{4}\n)\n'.format(vmodlName, wsdlName, parent, version, props)
+
+    def create_enum_string(self, item):
+        # vmodlName, wsdlName, version, values
+        vmodlName = self._get_vmodl_name(item)
+        wsdlName = item["name"]
+        version = "sms.version.version2"
+        values = ['"{}"'.format(const.name) for const in item["constants"]]
+        values = "[\n\t\t{}\n\t]".format(",\n\t\t".join(values))
+        return 'CreateEnumType(\n\t"{0}",\n\t"{1}",\n\t"{2}",\n\t{3}\n)\n'.format(vmodlName, wsdlName, version, values)
+
     def process_mo_item(self, item, items):
         props = []
         codename, docname = self._setup(item)
@@ -56,23 +138,8 @@ class VisdkPipeline(object):
         if _base == self.mo_base:
             _type = 'base'
 
-        with open(codename, 'w') as fp:
-            template = env.get_template('mo.template')
-            klass = template.render(
-                    classname=item['name'],
-                    description=item['description'],
-                    type=_type,
-                    props=props,
-                    methods=item['methods'],
-                    base=_base,
-                )
-
-            klass = klass.encode("ascii", "ignore")
-            fp.write(klass)
-
-            self._generate_docs(docname, env, item)
+        open("ServerObjects.py", "a+").write(self.create_mo_string(item))
         return item
-
 
     def process_do_item(self, item, items):
         codename, docname = self._setup(item)
@@ -86,34 +153,11 @@ class VisdkPipeline(object):
         if _base == self.mo_base:
             _type = 'base'
 
-        with open(codename, 'w') as fp:
+        if item['name'] in ["DynamicData", "DyanmicArray", "DynamicProperty", "MethodFault"]:
+            return
 
-            required = 0
-            required_props = []
-            optional_props = []
-            props = self._get_props(item, items)
-            for prop in props:
-                if not prop.optional:
-                    required += 1
-                    required_props.append(prop)
-                else:
-                    optional_props.append(prop)
+        open("ServerObjects.py", "a+").write(self.create_do_string(item))
 
-            template = env.get_template('do.template')
-            klass = template.render(
-                    classname=item['name'],
-                    description=item['description'],
-                    required_props=[x.name for x in required_props],
-                    optional_props=[x.name for x in optional_props],
-                    required_len=required,
-                    type=_type,
-                    base=_base,
-                    namespace=item['namespace']
-                )
-            klass = klass.encode("ascii", "ignore")
-            fp.write(klass)
-
-        self._generate_docs(docname, env, item)
         return item
 
     def process_enum_item(self, item, items):
@@ -123,7 +167,7 @@ class VisdkPipeline(object):
         env.filters['uncamelcase'] = camel_to_under
         env.filters['quote'] = quote
 
-        self._generate_docs(docname, env, item)
+        open("ServerObjects.py", "a+").write(self.create_enum_string(item))
         return item
 
     def _get_props(self, item, items):
